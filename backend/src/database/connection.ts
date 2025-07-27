@@ -2,9 +2,9 @@ import { Pool } from 'pg';
 import { CREATE_TABLES_SQL } from '../types/database';
 
 export class Database {
-    private pool: Pool;
+  private pool: Pool;
     
-    constructor() {
+  constructor() {
     this.pool = new Pool({
       host: process.env.DB_HOST,
       port: parseInt(process.env.DB_PORT || '5432'),
@@ -15,5 +15,22 @@ export class Database {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
     });
+  }
+  getPool(): Pool {
+    return this.pool;
+  }
+
+  async initialize(): Promise<void> {
+    try {
+      // Create tables if they don't exist
+      await this.pool.query(CREATE_TABLES_SQL);
+      console.log('Database initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize database:', error);
+      throw error;
+    }
+  }
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 }
