@@ -4,6 +4,7 @@ import { VirtualWallet } from '../models/VirtualWallet';
 import { SEED_DATA } from '../types/database';
 import { WalletBalance } from '../models/WalletBalance';
 import { VirtualTransaction } from '../models/Transaction';
+import { GasPriceResponse } from './oneInchService';
 
 export class WalletService {
   constructor(private db: Pool) {}
@@ -136,7 +137,7 @@ export class WalletService {
     toTokenSymbol: string;
     toAmount: string;
     gasUsed: string;
-    gasPrice: string;
+    gasPrice: GasPriceResponse;
     slippage: string;
     protocolsUsed: string[];
     oneInchQuoteData: any;
@@ -211,7 +212,7 @@ export class WalletService {
       const ethAddress = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
       const ethBalance = await this.getTokenBalance(params.walletId, ethAddress);
       if (ethBalance) {
-        const gasCost = (BigInt(params.gasUsed) * BigInt(params.gasPrice)).toString();
+        const gasCost = (BigInt(params.gasUsed) * BigInt(params.gasPrice.baseFee)).toString();
         const newEthBalance = (BigInt(ethBalance.balance) - BigInt(gasCost)).toString();
         await client.query(
           'UPDATE wallet_balances SET balance = $3, last_updated = CURRENT_TIMESTAMP WHERE wallet_id = $1 AND token_address = $2',

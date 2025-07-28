@@ -62,3 +62,59 @@ export const validateLogin = [
     .withMessage('Password is required'),
   handleValidationErrors
 ];
+
+export const validateSwapSimulation = [
+  body('walletId')
+    .isUUID()
+    .withMessage('Invalid wallet ID'),
+  body('chainId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Chain ID must be a positive integer'),
+  body('fromToken')
+    .isLength({ min: 42, max: 42 })
+    .withMessage('Invalid from token address'),
+  body('toToken')
+    .isLength({ min: 42, max: 42 })
+    .withMessage('Invalid to token address'),
+  body('amount')
+    .isNumeric()
+    .withMessage('Amount must be numeric'),
+  body('slippage')
+    .optional()
+    .isFloat({ min: 0.1, max: 50 })
+    .withMessage('Slippage must be between 0.1 and 50'),
+  handleValidationErrors
+];
+
+export const validateVirtualSwap = [
+  body('walletId')
+    .isUUID()
+    .withMessage('Invalid wallet ID'),
+  body('chainId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Chain ID must be a positive integer'),
+  body('fromToken')
+    .isLength({ min: 42, max: 42 })
+    .withMessage('Invalid from token address'),
+  body('toToken')
+    .isLength({ min: 42, max: 42 })
+    .withMessage('Invalid to token address'),
+  body('amount')
+    .isNumeric()
+    .withMessage('Amount must be numeric'),
+  body('slippage')
+    .optional()
+    .isFloat({ min: 0.1, max: 50 })
+    .withMessage('Slippage must be between 0.1 and 50'),
+  body('fromTokenSymbol')
+    .optional()
+    .isLength({ min: 1, max: 20 })
+    .withMessage('Invalid from token symbol'),
+  body('toTokenSymbol')
+    .optional()
+    .isLength({ min: 1, max: 20 })
+    .withMessage('Invalid to token symbol'),
+  handleValidationErrors
+];

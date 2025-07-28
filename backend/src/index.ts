@@ -5,6 +5,7 @@ import { Database } from './database/connection';
 import { createWalletRoutes } from './routes/wallet';
 import { errorHandler } from './middleware/errorHandler';
 import { createAuthRoutes } from './routes/auth';
+import { createOneInchRoutes } from './routes/oneinch';
 
 dotenv.config();
 
@@ -43,6 +44,7 @@ app.get('/health', (req: Request, res: Response) => {
 // API Routes
 app.use('/api/auth', createAuthRoutes(database.getPool()));
 app.use('/api/wallet', createWalletRoutes(database.getPool()));
+app.use('/api/1inch',createOneInchRoutes(database.getPool()))
 
 
 // 404 handler
