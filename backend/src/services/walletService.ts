@@ -1,284 +1,444 @@
 import { Pool } from 'pg';
 import { ethers } from 'ethers';
 import { VirtualWallet } from '../models/VirtualWallet';
-import { SEED_DATA } from '../types/database';
-import { WalletBalance } from '../models/WalletBalance';
+import { Tokens, WalletBalance } from '../models/WalletBalance';
 import { VirtualTransaction } from '../models/Transaction';
-import { GasPriceResponse } from './oneInchService';
+import { GasPriceResponse, OneInchService } from './oneInchService';
+import { ChainWallet, Wallet, WalletResponse, walletUtils } from '../types/wallet';
 
 export class WalletService {
-  constructor(private db: Pool) {}
-
-  // Generate a random virtual wallet address
-  private generateVirtualAddress(): string {
-    return ethers.Wallet.createRandom().address;
-  }
-  // Generate a fake transaction hash
-  private generateTransactionHash(): string {
-    return ethers.keccak256(ethers.toUtf8Bytes(Date.now().toString() + Math.random().toString()));
-  }
-  // Create a new virtual wallet for a user
-  async createWallet(userId: string, chainId: number = 1, name: string = 'Ethereum Wallet'): Promise<VirtualWallet> {
-    const address = this.generateVirtualAddress();
+  
+  constructor(private db: Pool) {
     
-    const query = `
-      INSERT INTO virtual_wallets (user_id, address, chain_id, name)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-    `;
-    
-    const result = await this.db.query(query, [userId, address, chainId, name]);
-    const wallet = result.rows[0];
-
-    // Initialize wallet with default tokens
-    await this.initializeWalletBalances(wallet.id);
-    
-    return wallet;
   }
-  // Initialize wallet with starting balances
-  private async initializeWalletBalances(walletId: string): Promise<void> {
-    const insertQuery = `
-      INSERT INTO wallet_balances (wallet_id, token_address, token_symbol, token_name, token_decimals, balance)
-      VALUES ($1, $2, $3, $4, $5, $6)
-    `;
 
-    for (const token of SEED_DATA.DEFAULT_TOKENS) {
-      await this.db.query(insertQuery, [
-        walletId,
-        token.address,
-        token.symbol,
-        token.name,
-        token.decimals,
-        token.initial_balance
-      ]);
+  public async getWalletByUserId(userId: string): Promise<WalletResponse> {
+    try {
+      const walletResult = await this.db.query(`
+        SELECT 
+          w.id,
+          w.user_id,
+          w.chains,
+          w.created_at,
+          w.updated_at
+        FROM wallets w
+        WHERE w.user_id = $1
+      `, [userId]);
+
+      if (walletResult.rows.length === 0) {
+        return {
+          success: false,
+          message: 'Wallet not found'
+        };
+      }
+
+      const walletData = walletResult.rows[0];
+      
+      const wallet: Wallet = {
+        id: walletData.id,
+        user_id: walletData.user_id,
+        chains: walletData.chains || {},
+        created_at: walletData.created_at,
+        updated_at: walletData.updated_at
+      };
+
+      // Calculate total USD value across all chains
+      const totalUsdValue = Object.values(wallet.chains).reduce((total, chain: ChainWallet) => {
+        return total + parseFloat(chain.total_usd_value || '0');
+      }, 0);
+
+      return {
+        success: true,
+        message: 'Wallet retrieved successfully',
+        data: {
+          wallet,
+          total_usd_value: totalUsdValue.toFixed(2)
+        }
+      };
+
+    } catch (error) {
+      console.error('Get wallet error:', error);
+      return {
+        success: false,
+        message: 'Failed to retrieve wallet'
+      };
     }
   }
-  // Get user's wallets
-  async getUserWallets(userId: string): Promise<VirtualWallet[]> {
-    const query = `
-      SELECT * FROM virtual_wallets 
-      WHERE user_id = $1 
-      ORDER BY created_at DESC
-    `;
-    
-    const result = await this.db.query(query, [userId]);
-    return result.rows;
+
+  public async getWalletByChain(userId: string, chainId: number): Promise<ChainWallet | null> {
+    try {
+      const walletResult = await this.db.query(`
+        SELECT chains
+        FROM wallets w
+        WHERE w.user_id = $1
+      `, [userId]);
+
+      if (walletResult.rows.length === 0) {
+        return null;
+      }
+
+      const chains = walletResult.rows[0].chains || {};
+      return chains[chainId.toString()] || null;
+
+    } catch (error) {
+      console.error('Get wallet by chain error:', error);
+      return null;
+    }
   }
-  // Get wallet by ID
-  async getWalletById(walletId: string, userId: string): Promise<VirtualWallet | null> {
-    const query = `
-      SELECT * FROM virtual_wallets 
-      WHERE id = $1 AND user_id = $2
-    `;
-    
-    const result = await this.db.query(query, [walletId, userId]);
-    return result.rows[0] || null;
-  }
-  // Get wallet balances
-  async getWalletBalances(walletId: string): Promise<WalletBalance[]> {
-    const query = `
-      SELECT * FROM wallet_balances 
-      WHERE wallet_id = $1 
-      ORDER BY usd_value DESC
-    `;
-    
-    const result = await this.db.query(query, [walletId]);
-    return result.rows;
-  }
-  // Get specific token balance
-  async getTokenBalance(walletId: string, tokenAddress: string): Promise<WalletBalance | null> {
-    const query = `
-      SELECT * FROM wallet_balances 
-      WHERE wallet_id = $1 AND token_address = $2
-    `;
-    
-    const result = await this.db.query(query, [walletId, tokenAddress]);
-    return result.rows[0] || null;
-  }
-  // Update token balance
-  async updateTokenBalance(
-    walletId: string, 
-    tokenAddress: string, 
-    newBalance: string, 
-    usdValue?: string
-  ): Promise<void> {
-    const query = `
-      UPDATE wallet_balances 
-      SET balance = $3, usd_value = COALESCE($4, usd_value), last_updated = CURRENT_TIMESTAMP
-      WHERE wallet_id = $1 AND token_address = $2
-    `;
-    
-    await this.db.query(query, [walletId, tokenAddress, newBalance, usdValue]);
-  }
-  // Add new token to wallet (if user receives a new token)
-  async addTokenToWallet(
-    walletId: string,
+
+  public async updateTokenBalance(
+    userId: string,
+    chainId: number,
     tokenAddress: string,
-    tokenSymbol: string,
-    tokenName: string,
-    tokenDecimals: number,
-    balance: string = '0'
-  ): Promise<void> {
-    const query = `
-      INSERT INTO wallet_balances (wallet_id, token_address, token_symbol, token_name, token_decimals, balance)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (wallet_id, token_address) 
-      DO UPDATE SET balance = wallet_balances.balance + EXCLUDED.balance
-    `;
-    
-    await this.db.query(query, [walletId, tokenAddress, tokenSymbol, tokenName, tokenDecimals, balance]);
-  }
-   async executeVirtualTrade(params: {
-    walletId: string;
-    fromTokenAddress: string;
-    fromTokenSymbol: string;
-    fromAmount: string;
-    toTokenAddress: string;
-    toTokenSymbol: string;
-    toAmount: string;
-    gasUsed: string;
-    gasPrice: GasPriceResponse;
-    slippage: string;
-    protocolsUsed: string[];
-    oneInchQuoteData: any;
-    type?: 'swap' | 'bridge';
-  }): Promise<VirtualTransaction> {
+    newBalance: string,
+    priceUsd?: string
+  ): Promise<boolean> {
     const client = await this.db.connect();
     
     try {
       await client.query('BEGIN');
-      
-      // 1. Check if user has sufficient balance
-      const fromBalance = await this.getTokenBalance(params.walletId, params.fromTokenAddress);
-      if (!fromBalance || BigInt(fromBalance.balance) < BigInt(params.fromAmount)) {
-        throw new Error('Insufficient balance');
+
+      // Get current wallet
+      const walletResult = await client.query(`
+        SELECT id, chains FROM wallets WHERE user_id = $1 FOR UPDATE
+      `, [userId]);
+
+      if (walletResult.rows.length === 0) {
+        return false;
       }
 
-      // 2. Create transaction record
-      const transactionHash = this.generateTransactionHash();
-      const transactionQuery = `
-        INSERT INTO virtual_transactions (
-          wallet_id, transaction_hash, type, status,
-          from_token_address, from_token_symbol, from_amount,
-          to_token_address, to_token_symbol, to_amount,
-          gas_used, gas_price, slippage, protocols_used,
-          oneinch_quote_data, executed_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)
-        RETURNING *
-      `;
-      
-      const transactionResult = await client.query(transactionQuery, [
-        params.walletId,
-        transactionHash,
-        params.type || 'swap',
-        'completed',
-        params.fromTokenAddress,
-        params.fromTokenSymbol,
-        params.fromAmount,
-        params.toTokenAddress,
-        params.toTokenSymbol,
-        params.toAmount,
-        params.gasUsed,
-        params.gasPrice,
-        params.slippage,
-        JSON.stringify(params.protocolsUsed),
-        JSON.stringify(params.oneInchQuoteData)
-      ]);
+      const walletData = walletResult.rows[0];
+      const wallet: Wallet = {
+        id: walletData.id,
+        user_id: userId,
+        chains: walletData.chains || {},
+        created_at: new Date(),
+        updated_at: new Date()
+      };
 
-      // 3. Update from token balance (deduct)
-      const newFromBalance = (BigInt(fromBalance.balance) - BigInt(params.fromAmount)).toString();
-      await client.query(
-        'UPDATE wallet_balances SET balance = $3, last_updated = CURRENT_TIMESTAMP WHERE wallet_id = $1 AND token_address = $2',
-        [params.walletId, params.fromTokenAddress, newFromBalance]
+      // Update the token balance
+      const updatedWallet = walletUtils.updateTokenBalance(
+        wallet,
+        chainId,
+        tokenAddress,
+        newBalance,
+        priceUsd
       );
 
-      // 4. Update to token balance (add)
-      const toBalance = await this.getTokenBalance(params.walletId, params.toTokenAddress);
-      if (toBalance) {
-        const newToBalance = (BigInt(toBalance.balance) + BigInt(params.toAmount)).toString();
-        await client.query(
-          'UPDATE wallet_balances SET balance = $3, last_updated = CURRENT_TIMESTAMP WHERE wallet_id = $1 AND token_address = $2',
-          [params.walletId, params.toTokenAddress, newToBalance]
-        );
-      } else {
-        // Add new token if it doesn't exist
-        await client.query(
-          'INSERT INTO wallet_balances (wallet_id, token_address, token_symbol, token_name, token_decimals, balance) VALUES ($1, $2, $3, $4, $5, $6)',
-          [params.walletId, params.toTokenAddress, params.toTokenSymbol, params.toTokenSymbol, 18, params.toAmount]
-        );
-      }
-
-      // 5. Deduct gas fees (from ETH balance)
-      const ethAddress = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
-      const ethBalance = await this.getTokenBalance(params.walletId, ethAddress);
-      if (ethBalance) {
-        const gasCost = (BigInt(params.gasUsed) * BigInt(params.gasPrice.baseFee)).toString();
-        const newEthBalance = (BigInt(ethBalance.balance) - BigInt(gasCost)).toString();
-        await client.query(
-          'UPDATE wallet_balances SET balance = $3, last_updated = CURRENT_TIMESTAMP WHERE wallet_id = $1 AND token_address = $2',
-          [params.walletId, ethAddress, newEthBalance]
-        );
-      }
+      // Save updated wallet
+      await client.query(`
+        UPDATE wallets 
+        SET chains = $1, updated_at = NOW()
+        WHERE id = $2
+      `, [JSON.stringify(updatedWallet.chains), wallet.id]);
 
       await client.query('COMMIT');
-      return transactionResult.rows[0];
-      
+      return true;
+
     } catch (error) {
       await client.query('ROLLBACK');
-      throw error;
+      console.error('Update token balance error:', error);
+      return false;
     } finally {
       client.release();
     }
   }
-  // Get transaction history
-  async getTransactionHistory(walletId: string, limit: number = 50, offset: number = 0): Promise<VirtualTransaction[]> {
-    const query = `
-      SELECT * FROM virtual_transactions 
-      WHERE wallet_id = $1 
-      ORDER BY created_at DESC 
-      LIMIT $2 OFFSET $3
-    `;
-    
-    const result = await this.db.query(query, [walletId, limit, offset]);
-    return result.rows;
-  }
-  // Get portfolio summary
-  async getPortfolioSummary(walletId: string): Promise<{
-    totalValue: string;
-    balances: WalletBalance[];
-    transactionCount: number;
-  }> {
-    const balances = await this.getWalletBalances(walletId);
-    
-    const totalValue = balances.reduce((sum, balance) => {
-      return sum + parseFloat(balance.usd_value || '0');
-    }, 0).toString();
 
-    const countQuery = 'SELECT COUNT(*) FROM virtual_transactions WHERE wallet_id = $1';
-    const countResult = await this.db.query(countQuery, [walletId]);
-    const transactionCount = parseInt(countResult.rows[0].count);
+  public async addTokenToWallet(
+    userId: string,
+    chainId: number,
+    tokenData: {
+      token_address: string;
+      token_symbol: string;
+      token_name: string;
+      decimals: number;
+      balance?: string;
+      logo_uri?: string;
+    }
+  ): Promise<boolean> {
+    const client = await this.db.connect();
+    
+    try {
+      await client.query('BEGIN');
 
-    return {
-      totalValue,
-      balances,
-      transactionCount
-    };
+      // Get current wallet
+      const walletResult = await client.query(`
+        SELECT id, chains FROM wallets WHERE user_id = $1 FOR UPDATE
+      `, [userId]);
+
+      if (walletResult.rows.length === 0) {
+        return false;
+      }
+
+      const walletData = walletResult.rows[0];
+      const wallet: Wallet = {
+        id: walletData.id,
+        user_id: userId,
+        chains: walletData.chains || {},
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      // Add token to wallet
+      const updatedWallet = walletUtils.addTokenToChain(wallet, chainId, tokenData);
+
+      // Save updated wallet
+      await client.query(`
+        UPDATE wallets 
+        SET chains = $1, updated_at = NOW()
+        WHERE id = $2
+      `, [JSON.stringify(updatedWallet.chains), wallet.id]);
+
+      await client.query('COMMIT');
+      return true;
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Add token to wallet error:', error);
+      return false;
+    } finally {
+      client.release();
+    }
   }
-  // Validate sufficient balance for trade
-  async validateTradeBalance(walletId: string, tokenAddress: string, amount: string): Promise<boolean> {
-    const balance = await this.getTokenBalance(walletId, tokenAddress);
-    if (!balance) return false;
+
+  public async simulateSwap(
+    userId: string,
+    fromChainId: number,
+    fromTokenAddress: string,
+    fromAmount: string,
+    toChainId: number,
+    toTokenAddress: string,
+    toAmount: string
+  ): Promise<boolean> {
+    const client = await this.db.connect();
     
-    return BigInt(balance.balance) >= BigInt(amount);
+    try {
+      await client.query('BEGIN');
+
+      // Get current wallet
+      const walletResult = await client.query(`
+        SELECT id, chains FROM wallets WHERE user_id = $1 FOR UPDATE
+      `, [userId]);
+
+      if (walletResult.rows.length === 0) {
+        return false;
+      }
+
+      const walletData = walletResult.rows[0];
+      const wallet: Wallet = {
+        id: walletData.id,
+        user_id: userId,
+        chains: walletData.chains || {},
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      // Get current balances
+      const fromToken = walletUtils.getTokenInChain(wallet, fromChainId, fromTokenAddress);
+      if (!fromToken) {
+        throw new Error('Source token not found in wallet');
+      }
+
+      // Check if user has sufficient balance
+      const currentBalance = BigInt(fromToken.balance);
+      const swapAmount = BigInt(fromAmount);
+      
+      if (currentBalance < swapAmount) {
+        throw new Error('Insufficient balance for swap');
+      }
+
+      // Deduct from source token
+      const newFromBalance = (currentBalance - swapAmount).toString();
+      const updatedWallet1 = walletUtils.updateTokenBalance(
+        wallet,
+        fromChainId,
+        fromTokenAddress,
+        newFromBalance
+      );
+
+      // Handle destination token (might not exist yet)
+      let finalWallet = updatedWallet1;
+      
+      const toToken = walletUtils.getTokenInChain(updatedWallet1, toChainId, toTokenAddress);
+      
+      if (toToken) {
+        // Token exists, add to current balance
+        const currentToBalance = BigInt(toToken.balance);
+        const addAmount = BigInt(toAmount);
+        const newToBalance = (currentToBalance + addAmount).toString();
+        
+        finalWallet = walletUtils.updateTokenBalance(
+          updatedWallet1,
+          toChainId,
+          toTokenAddress,
+          newToBalance
+        );
+      } else {
+        // Token doesn't exist, need to add it first
+        // For now, i'll need to know token details. In a real implementation,
+        // this info would come from the swap quote
+        console.log(`Adding new token ${toTokenAddress} to chain ${toChainId}`);
+        
+        // For simulation, i'll just update the balance assuming the token exists
+        finalWallet = walletUtils.updateTokenBalance(
+          updatedWallet1,
+          toChainId,
+          toTokenAddress,
+          toAmount
+        );
+      }
+
+      // Save updated wallet
+      await client.query(`
+        UPDATE wallets 
+        SET chains = $1, updated_at = NOW()
+        WHERE id = $2
+      `, [JSON.stringify(finalWallet.chains), wallet.id]);
+
+      await client.query('COMMIT');
+      return true;
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Simulate swap error:', error);
+      return false;
+    } finally {
+      client.release();
+    }
   }
-  async getWalletTotalValue(walletId: string): Promise<string> {
-    const query = `
-      SELECT COALESCE(SUM(usd_value), 0) as total_value 
-      FROM wallet_balances 
-      WHERE wallet_id = $1
-    `;
+
+  public async addTokenToChain(
+    userId: string,
+    chainId: number,
+    tokenData: {
+      token_address: string;
+      token_symbol: string;
+      token_name: string;
+      decimals: number;
+      balance?: string;
+      logo_uri?: string;
+    }
+  ): Promise<boolean> {
+    const client = await this.db.connect();
     
-    const result = await this.db.query(query, [walletId]);
-    return result.rows[0].total_value || '0';
+    try {
+      await client.query('BEGIN');
+
+      // Get current wallet
+      const walletResult = await client.query(`
+        SELECT id, chains FROM wallets WHERE user_id = $1 FOR UPDATE
+      `, [userId]);
+
+      if (walletResult.rows.length === 0) {
+        return false;
+      }
+
+      const walletData = walletResult.rows[0];
+      const wallet: Wallet = {
+        id: walletData.id,
+        user_id: userId,
+        chains: walletData.chains || {},
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      // Ensure chain exists
+      const chainKey = chainId.toString();
+      if (!wallet.chains[chainKey]) {
+        // Create new chain if it doesn't exist
+        const chainNames: { [key: number]: { name: string; symbol: string } } = {
+          1: { name: 'Ethereum', symbol: 'ETH' },
+          137: { name: 'Polygon', symbol: 'MATIC' },
+          42161: { name: 'Arbitrum', symbol: 'ETH' },
+          10: { name: 'Optimism', symbol: 'ETH' },
+          56: { name: 'BNB Chain', symbol: 'BNB' }
+        };
+
+        const chainInfo = chainNames[chainId] || { name: `Chain ${chainId}`, symbol: 'UNKNOWN' };
+        
+        wallet.chains[chainKey] = {
+          chain_id: chainId,
+          chain_name: chainInfo.name,
+          chain_symbol: chainInfo.symbol,
+          tokens: [],
+          total_usd_value: '0'
+        };
+      }
+
+      // Add token to chain
+      const updatedWallet = walletUtils.addTokenToChain(wallet, chainId, tokenData);
+
+      // Save updated wallet
+      await client.query(`
+        UPDATE wallets 
+        SET chains = $1, updated_at = NOW()
+        WHERE id = $2
+      `, [JSON.stringify(updatedWallet.chains), wallet.id]);
+
+      await client.query('COMMIT');
+      return true;
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Add token to chain error:', error);
+      return false;
+    } finally {
+      client.release();
+    }
   }
+
+  public async getTokenBalance(
+    userId: string,
+    chainId: number,
+    tokenAddress: string
+  ): Promise<{ balance: string; formatted_balance: string } | null> {
+    try {
+      const walletResult = await this.db.query(`
+        SELECT chains FROM wallets WHERE user_id = $1
+      `, [userId]);
+
+      if (walletResult.rows.length === 0) {
+        return null;
+      }
+
+      const chains = walletResult.rows[0].chains || {};
+      const wallet: Wallet = {
+        id: '',
+        user_id: userId,
+        chains,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      const token = walletUtils.getTokenInChain(wallet, chainId, tokenAddress);
+      
+      if (!token) {
+        return null;
+      }
+
+      return {
+        balance: token.balance,
+        formatted_balance: token.formatted_balance
+      };
+
+    } catch (error) {
+      console.error('Get token balance error:', error);
+      return null;
+    }
+  }
+
+   public async refreshWalletPrices(userId: string): Promise<boolean> {
+    // This method will be implemented later to fetch real-time prices
+    // from 1inch API and update USD values
+    try {
+      // TODO: Implement price fetching logic
+      console.log('Refreshing wallet prices for user:', userId);
+      return true;
+    } catch (error) {
+      console.error('Refresh wallet prices error:', error);
+      return false;
+    }
+  }
+
+ 
 }

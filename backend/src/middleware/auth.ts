@@ -1,29 +1,53 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
+import { Pool } from 'pg';
+import { AuthService } from '../services/authService';
 
-interface AuthenticatedRequest extends Request {
-  userId?: string;
+export interface AuthenticatedRequest extends Request {
+  user: {
+    userId: string;
+    email: string;
+    walletId: string;
+  };
 }
 
-export const authMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(401).json({
+
+export const createAuthMiddleware = (db: Pool) => {
+  const authService = new AuthService(db);
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const authHeader = req.headers.authorization;
+
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          message: 'Access token is required'
+        });
+        return;
+      }
+
+      const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+      const decoded = authService.verifyToken(token);
+
+      if (!decoded) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid or expired token'
+        });
+        return;
+      }
+
+      
+      (req as AuthenticatedRequest).user = decoded;
+      next();
+
+    } catch (error) {
+      console.error('Auth middleware error:', error);
+      res.status(500).json({
         success: false,
-        message: 'No token provided'
+        message: 'Internal server error'
       });
     }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as { userId: string };
-    req.userId = decoded.userId;
-    
-    next();
-  } catch (error) {
-    res.status(401).json({
-      success: false,
-      message: 'Invalid token'
-    });
-  }
+  };
 };

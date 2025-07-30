@@ -1,8 +1,10 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { Pool } from 'pg';
 import { WalletService } from '../services/walletService';
+import { AuthService } from '../services/authService';
+import { LoginRequest, RegisterRequest } from '../models/User';
 
 interface AuthenticatedRequest extends Request {
   userId?: string;
@@ -11,214 +13,198 @@ interface AuthenticatedRequest extends Request {
 export class AuthController {
   private db: Pool;
   private walletService: WalletService;
+  private authService: AuthService;
 
   constructor(db: Pool) {
     this.db = db;
     this.walletService = new WalletService(db);
+    this.authService = new AuthService(db);
   }
 
-  // Register new user
-  register = async (req: Request, res: Response) => {
+  public register = async (req: Request, res: Response): Promise<void> => {
     try {
-      console.log('🔍 Incoming body in register controller:', req.body);
+      const { email, password }: RegisterRequest = req.body;
 
-      const { email, username, password } = req.body;
-
-      // Check if user already exists
-      const existingUser = await this.db.query(
-        'SELECT id FROM users WHERE email = $1 OR username = $2',
-        [email, username]
-      );
-
-      if (existingUser.rows.length > 0) {
-        return res.status(400).json({
+      // Basic validation
+      if (!email || !password) {
+        res.status(400).json({
           success: false,
-          message: 'User with this email or username already exists'
+          message: 'Email and password are required'
         });
+        return;
       }
 
-      // Hash password
-      const saltRounds = 12;
-      const passwordHash = await bcrypt.hash(password, saltRounds);
+      // Email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        res.status(400).json({
+          success: false,
+          message: 'Please provide a valid email address'
+        });
+        return;
+      }
 
-      // Create user
-      const newUser = await this.db.query(
-        'INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id, email, username, created_at',
-        [email, username, passwordHash]
-      );
+      // Password validation
+      if (password.length < 8) {
+        res.status(400).json({
+          success: false,
+          message: 'Password must be at least 8 characters long'
+        });
+        return;
+      }
 
-      const user = newUser.rows[0];
+      const result = await this.authService.register({ email, password });
 
-      // Create default wallet for new user
-      const defaultWallet = await this.walletService.createWallet(user.id, 1, 'Main Wallet');
+      if (result.success) {
+        res.status(201).json(result);
+      } else {
+        res.status(400).json(result);
+      }
 
-      // Generate JWT token
-      const token = jwt.sign(
-        { userId: user.id },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      );
-
-      res.status(201).json({
-        success: true,
-        data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            created_at: user.created_at
-          },
-          defaultWallet,
-          token
-        },
-        message: 'User registered successfully'
-      });
     } catch (error) {
-      console.error('Registration error:', error);
+      console.error('Register controller error:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to register user',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        message: 'Internal server error'
       });
     }
   };
 
-  // Login user
-  login = async (req: Request, res: Response) => {
+  public login = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { email, password } = req.body;
+      const { email, password }: LoginRequest = req.body;
 
-      // Find user
-      const userResult = await this.db.query(
-        'SELECT id, email, username, password_hash, created_at FROM users WHERE email = $1',
-        [email]
-      );
-
-      if (userResult.rows.length === 0) {
-        return res.status(401).json({
+      // Basic validation
+      if (!email || !password) {
+        res.status(400).json({
           success: false,
-          message: 'Invalid email or password'
+          message: 'Email and password are required'
         });
+        return;
       }
 
-      const user = userResult.rows[0];
+      const result = await this.authService.login({ email, password });
 
-      // Verify password
-      const isValidPassword = await bcrypt.compare(password, user.password_hash);
-      if (!isValidPassword) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid email or password'
-        });
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(401).json(result);
       }
 
-      // Generate JWT token
-      const token = jwt.sign(
-        { userId: user.id },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      );
-
-      // Get user's wallets
-      const wallets = await this.walletService.getUserWallets(user.id);
-
-      res.json({
-        success: true,
-        data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            created_at: user.created_at
-          },
-          wallets,
-          token
-        },
-        message: 'Login successful'
-      });
     } catch (error) {
-      console.error('Login error:', error);
+      console.error('Login controller error:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to login',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        message: 'Internal server error'
       });
     }
   };
 
-  // Refresh token
-  refreshToken = async (req: Request, res: Response) => {
+   public getProfile = async (req: Request, res: Response,next:NextFunction): Promise<void> => {
     try {
-      const { token } = req.body;
-
-      if (!token) {
-        return res.status(401).json({
-          success: false,
-          message: 'No token provided'
-        });
-      }
-
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as { userId: string };
-      
-      // Generate new token
-      const newToken = jwt.sign(
-        { userId: decoded.userId },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      );
-
-      res.json({
-        success: true,
-        data: { token: newToken }
-      });
-    } catch (error) {
-      res.status(401).json({
-        success: false,
-        message: 'Invalid token'
-      });
-    }
-  };
-
-  // Get current user
-  getCurrentUser = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const userId = req.userId;
+      const userId = (req as any).user?.userId;
+      const {token} = req.body;
 
       if (!userId) {
-        return res.status(401).json({
+        res.status(401).json({
           success: false,
-          message: 'Not authenticated'
+          message: 'Access token is required'
+        });
+        return;
+      } 
+
+      
+      const decoded = this.authService.verifyToken(token);
+
+      if (!decoded) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid or expired token'
+        });
+        return;
+      }
+
+      (req as any).user = decoded;
+      next();
+
+    } catch (error) {
+      console.error('Auth middleware error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public refreshToken = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as any).user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'User not authenticated'
+        });
+        return;
+      }
+
+      const result = await this.authService.refreshToken(userId);
+
+      if (result) {
+        res.status(200).json({
+          success: true,
+          message: 'Token refreshed successfully',
+          data: result
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'Failed to refresh token'
         });
       }
 
-      const userResult = await this.db.query(
-        'SELECT id, email, username, created_at FROM users WHERE id = $1',
-        [userId]
-      );
+    } catch (error) {
+      console.error('Refresh token controller error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
 
-      if (userResult.rows.length === 0) {
-        return res.status(404).json({
+  public getProfileWithWallet = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as any).user?.userId;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message: 'User not authenticated'
+        });
+        return;
+      }
+
+      const user = await this.authService.getUserWithWalletInfo(userId);
+
+      if (!user) {
+        res.status(404).json({
           success: false,
           message: 'User not found'
         });
+        return;
       }
 
-      const user = userResult.rows[0];
-      const wallets = await this.walletService.getUserWallets(userId);
-
-      res.json({
+      res.status(200).json({
         success: true,
-        data: {
-          user,
-          wallets
-        }
+        message: 'Profile with wallet info retrieved successfully',
+        data: { user }
       });
+
     } catch (error) {
-      console.error('Get current user error:', error);
+      console.error('Get profile with wallet controller error:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to get user information',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        message: 'Internal server error'
       });
     }
   };

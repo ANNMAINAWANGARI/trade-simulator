@@ -2,10 +2,9 @@ import { Request, Response } from 'express';
 import { OneInchService } from '../services/oneInchService';
 import { WalletService } from '../services/walletService';
 import { Pool } from 'pg';
+import { CrossChainSwapRequest, SwapQuoteRequest } from '../types/swap';
+import { AuthenticatedRequest } from '../middleware/auth';
 
-interface AuthenticatedRequest extends Request {
-  userId?: string;
-}
 
 export class OneInchController {
   private oneInchService: OneInchService;
@@ -16,7 +15,292 @@ export class OneInchController {
     this.walletService = new WalletService(db);
   }
 
-  getTokens = async (req: Request, res: Response) => {
+  // Get quote for classic swap (same chain)
+  public getSwapQuote = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { fromToken, toToken, amount, chainId, slippage } = req.query;
+
+      if (!fromToken || !toToken || !amount || !chainId) {
+        res.status(400).json({
+          success: false,
+          message: 'fromToken, toToken, amount, and chainId are required'
+        });
+        return;
+      }
+
+      const quoteRequest: SwapQuoteRequest = {
+        fromTokenAddress: fromToken as string,
+        toTokenAddress: toToken as string,
+        amount: amount as string,
+        chainId: parseInt(chainId as string),
+        slippage: slippage ? parseInt(slippage as string) : 1
+      };
+
+      const quote = await this.oneInchService.getClassicSwapQuote(quoteRequest);
+
+      if (quote) {
+        res.status(200).json({
+          success: true,
+          message: 'Swap quote retrieved successfully',
+          data: quote
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'Failed to get swap quote'
+        });
+      }
+
+    } catch (error) {
+      console.error('Get swap quote error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  // Get quote for cross-chain swap
+  public getCrossChainQuote = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { fromToken, fromChainId, toToken, toChainId, amount, slippage } = req.query;
+
+      if (!fromToken || !fromChainId || !toToken || !toChainId || !amount) {
+        res.status(400).json({
+          success: false,
+          message: 'fromToken, fromChainId, toToken, toChainId, and amount are required'
+        });
+        return;
+      }
+
+      const quoteRequest: CrossChainSwapRequest = {
+        fromTokenAddress: fromToken as string,
+        fromChainId: parseInt(fromChainId as string),
+        toTokenAddress: toToken as string,
+        toChainId: parseInt(toChainId as string),
+        amount: amount as string,
+        slippage: slippage ? parseInt(slippage as string) : 1
+      };
+
+      const quote = await this.oneInchService.getCrossChainSwapQuote(quoteRequest);
+
+      if (quote) {
+        res.status(200).json({
+          success: true,
+          message: 'Cross-chain swap quote retrieved successfully',
+          data: quote
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'Failed to get cross-chain swap quote'
+        });
+      }
+
+    } catch (error) {
+      console.error('Get cross-chain quote error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  // Preview swap without executing
+  public previewSwap = async (req: Request, res: Response): Promise<void> => {
+    try {
+      
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const swapRequest = req.body;
+
+      // Validate request
+      if (!swapRequest || (!swapRequest.chainId && !swapRequest.fromChainId)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid swap request format'
+        });
+        return;
+      }
+
+      const simulation = await this.oneInchService.simulateSwap({
+        userId,
+        swap: swapRequest,
+        execute: false // Preview only
+      });
+
+      if (simulation.success) {
+        res.status(200).json(simulation);
+      } else {
+        res.status(400).json(simulation);
+      }
+
+    } catch (error) {
+      console.error('Preview swap error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+   // Execute swap simulation
+  public executeSwap = async (req: Request, res: Response): Promise<void> => {
+    try {
+      
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const swapRequest = req.body;
+
+      // Validate request
+      if (!swapRequest || (!swapRequest.chainId && !swapRequest.fromChainId)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid swap request format'
+        });
+        return;
+      }
+
+      const simulation = await this.oneInchService.simulateSwap({
+        userId,
+        swap: swapRequest,
+        execute: true // Actually execute the swap
+      });
+
+      if (simulation.success) {
+        res.status(200).json(simulation);
+      } else {
+        res.status(400).json(simulation);
+      }
+
+    } catch (error) {
+      console.error('Execute swap error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  // Get popular trading pairs
+  public getPopularPairs = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const chainId = parseInt(req.params.chainId);
+
+      if (!chainId || isNaN(chainId)) {
+        res.status(400).json({
+          success: false,
+          message: 'Valid chainId is required'
+        });
+        return;
+      }
+
+      const pairs = await this.oneInchService.getPopularSwapPairs(chainId);
+
+      res.status(200).json({
+        success: true,
+        message: 'Popular swap pairs retrieved successfully',
+        data: pairs
+      });
+
+    } catch (error) {
+      console.error('Get popular pairs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public calculateAmount = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { amount, decimals, operation } = req.query;
+
+      if (!amount || !decimals || !operation) {
+        res.status(400).json({
+          success: false,
+          message: 'amount, decimals, and operation (toWei|fromWei) are required'
+        });
+        return;
+      }
+
+      const decimalCount = parseInt(decimals as string);
+      let result: string;
+
+      if (operation === 'toWei') {
+        // Convert human readable to wei
+        const factor = BigInt(10) ** BigInt(decimalCount);
+        const amountFloat = parseFloat(amount as string);
+        result = BigInt(Math.floor(amountFloat * (10 ** decimalCount))).toString();
+      } else if (operation === 'fromWei') {
+        // Convert wei to human readable
+        const factor = BigInt(10) ** BigInt(decimalCount);
+        const amountBigInt = BigInt(amount as string);
+        const wholePart = amountBigInt / factor;
+        const fractionalPart = amountBigInt % factor;
+        
+        if (fractionalPart === BigInt(0)) {
+          result = wholePart.toString();
+        } else {
+          const fractionalStr = fractionalPart.toString().padStart(decimalCount, '0');
+          const trimmedFractional = fractionalStr.replace(/0+$/, '');
+          result = trimmedFractional === '' ? wholePart.toString() : `${wholePart}.${trimmedFractional}`;
+        }
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'operation must be either "toWei" or "fromWei"'
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Amount calculated successfully',
+        data: {
+          input: amount,
+          output: result,
+          decimals: decimalCount,
+          operation
+        }
+      });
+
+    } catch (error) {
+      console.error('Calculate amount error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public getSwapHistory = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const { page = 1, limit = 10 } = req.query;
+
+      // TODO: Implement swap history tracking
+      res.status(200).json({
+        success: true,
+        message: 'Swap history feature coming soon',
+        data: {
+          swaps: [],
+          pagination: {
+            page: parseInt(page as string),
+            limit: parseInt(limit as string),
+            total: 0
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Get swap history error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public getTokens = async (req: Request, res: Response) => {
     try {
       const { chainId = '1' } = req.params;
       const tokens = await this.oneInchService.getTokensCached(parseInt(chainId));
@@ -35,9 +319,9 @@ export class OneInchController {
     }
   };
 
-  getSpotPrice = async (req: Request, res: Response) => {
+  public getSpotPrice = async (req: Request, res: Response) => {
     try {
-      const { chainId = '1', tokenAddress } = req.params;
+      const { chainId, tokenAddress } = req.params;
       const { currency } = req.query;
       
       const price = await this.oneInchService.getSpotPrice(
@@ -64,9 +348,9 @@ export class OneInchController {
     }
   };
 
-  getGasPrice = async (req: Request, res: Response) => {
+  public getGasPrice = async (req: Request, res: Response) => {
     try {
-      const { chainId = '1' } = req.params;
+      const { chainId } = req.params;
       const gasPrice = await this.oneInchService.getGasPrice(parseInt(chainId));
       
       res.json({
@@ -83,22 +367,14 @@ export class OneInchController {
     }
   };
 
-  getMarketData = async (req: AuthenticatedRequest, res: Response) => {
+
+
+  public getMarketData = async (req: Request, res: Response) => {
     try {
-      const { chainId = '1' } = req.params;
-      const { walletId } = req.query;
-      
-      let walletAddress: string | undefined;
-      
-      // If walletId provided, get the wallet address
-      if (walletId && req.userId) {
-        const wallet = await this.walletService.getWalletById(walletId as string, req.userId);
-        walletAddress = wallet?.address;
-      }
-      
+      const { chainId } = req.params;
+
       const marketData = await this.oneInchService.getMarketData(
         parseInt(chainId),
-        walletAddress
       );
       
       res.json({
@@ -115,265 +391,8 @@ export class OneInchController {
     }
   };
 
-  getQuote = async (req: Request, res: Response) => {
-    try {
-      const { chainId = '1' } = req.params;
-      const { src, dst, amount, ...otherParams } = req.query;
-      
-      if (!src || !dst || !amount) {
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required parameters: src, dst, amount'
-        });
-      }
-      
-      const quote = await this.oneInchService.getQuote(parseInt(chainId), {
-        src: src as string,
-        dst: dst as string,
-        amount: amount as string,
-        ...otherParams
-      });
-      
-      res.json({
-        success: true,
-        data: quote
-      });
-    } catch (error) {
-      console.error('Error fetching quote:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch swap quote',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
 
-  simulateSwap = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const {
-        walletId,
-        chainId = 1,
-        fromToken,
-        toToken,
-        amount,
-        slippage = 1
-      } = req.body;
-      
-      if (!walletId || !fromToken || !toToken || !amount) {
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required parameters: walletId, fromToken, toToken, amount'
-        });
-      }
-      
-      const userId = req.userId!;
-      
-      // Verify wallet ownership
-      const wallet = await this.walletService.getWalletById(walletId, userId);
-      if (!wallet) {
-        return res.status(404).json({
-          success: false,
-          message: 'Wallet not found'
-        });
-      }
-      
-      // Validate balance
-      const hasBalance = await this.walletService.validateTradeBalance(
-        walletId,
-        fromToken,
-        amount
-      );
-      
-      if (!hasBalance) {
-        return res.status(400).json({
-          success: false,
-          message: 'Insufficient balance for this trade'
-        });
-      }
-      
-      // Get simulation data from 1inch
-      const simulation = await this.oneInchService.simulateSwap(
-        chainId,
-        fromToken,
-        toToken,
-        amount,
-        wallet.address,
-        slippage
-      );
-      
-      res.json({
-        success: true,
-        data: {
-          ...simulation,
-          walletId,
-          canExecute: hasBalance
-        }
-      });
-    } catch (error) {
-      console.error('Error simulating swap:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to simulate swap',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-
-  executeVirtualSwap = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const {
-        walletId,
-        chainId = 1,
-        fromToken,
-        toToken,
-        amount,
-        slippage = 1,
-        fromTokenSymbol,
-        toTokenSymbol
-      } = req.body;
-      
-      const userId = req.userId!;
-      
-      // Verify wallet ownership
-      const wallet = await this.walletService.getWalletById(walletId, userId);
-      if (!wallet) {
-        return res.status(404).json({
-          success: false,
-          message: 'Wallet not found'
-        });
-      }
-      
-      // Get real 1inch data for the trade
-      const simulation = await this.oneInchService.simulateSwap(
-        chainId,
-        fromToken,
-        toToken,
-        amount,
-        wallet.address,
-        slippage
-      );
-      
-      // Execute virtual trade using real 1inch data
-      const transaction = await this.walletService.executeVirtualTrade({
-        walletId,
-        fromTokenAddress: fromToken,
-        fromTokenSymbol: fromTokenSymbol || simulation.quote.fromToken.symbol,
-        fromAmount: amount,
-        toTokenAddress: toToken,
-        toTokenSymbol: toTokenSymbol || simulation.quote.toToken.symbol,
-        toAmount: simulation.quote.toAmount,
-        gasUsed: simulation.swap.tx.gas.toString(),
-        gasPrice: simulation.gasPrice,
-        slippage: slippage.toString(),
-        protocolsUsed: simulation.quote.protocols.flat().map(p => p.name),
-        oneInchQuoteData: simulation.quote,
-        type: 'swap'
-      });
-      
-      res.json({
-        success: true,
-        data: {
-          transaction,
-          oneInchData: simulation
-        },
-        message: 'Virtual swap executed successfully'
-      });
-    } catch (error) {
-      console.error('Error executing virtual swap:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to execute virtual swap',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-
-  getFusionQuote = async (req: Request, res: Response) => {
-    try {
-      const {
-        srcChainId,
-        dstChainId,
-        srcTokenAddress,
-        dstTokenAddress,
-        amount,
-        walletAddress
-      } = req.query;
-      
-      if (!srcChainId || !dstChainId || !srcTokenAddress || !dstTokenAddress || !amount || !walletAddress) {
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required parameters for cross-chain quote'
-        });
-      }
-      
-      const quote = await this.oneInchService.getFusionQuote({
-        srcChainId: parseInt(srcChainId as string),
-        dstChainId: parseInt(dstChainId as string),
-        srcTokenAddress: srcTokenAddress as string,
-        dstTokenAddress: dstTokenAddress as string,
-        amount: amount as string,
-        walletAddress: walletAddress as string
-      });
-      
-      res.json({
-        success: true,
-        data: quote
-      });
-    } catch (error) {
-      console.error('Error fetching fusion quote:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch cross-chain quote',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-
-  getFusionChains = async (req: Request, res: Response) => {
-    try {
-      const chains = await this.oneInchService.getFusionSupportedChains();
-      
-      res.json({
-        success: true,
-        data: { supportedChains: chains }
-      });
-    } catch (error) {
-      console.error('Error fetching supported chains:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch supported chains',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-
-  getLimitOrders = async (req: Request, res: Response) => {
-    try {
-      const { chainId = '1' } = req.params;
-      const { maker, makerAsset, takerAsset } = req.query;
-      
-      const orders = await this.oneInchService.getLimitOrders(
-        parseInt(chainId),
-        maker as string,
-        makerAsset as string,
-        takerAsset as string
-      );
-      
-      res.json({
-        success: true,
-        data: orders
-      });
-    } catch (error) {
-      console.error('Error fetching limit orders:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch limit orders',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-
-  healthCheck = async (req: Request, res: Response) => {
+  public healthCheck = async (req: Request, res: Response) => {
     try {
       const isHealthy = await this.oneInchService.healthCheck();
       
@@ -393,7 +412,7 @@ export class OneInchController {
     }
   };
 
-  getTokenPrices = async (req: Request, res: Response) => {
+  public getTokenPrices = async (req: Request, res: Response) => {
     try {
       const { chainId = '1' } = req.params;
       const { addresses } = req.query;

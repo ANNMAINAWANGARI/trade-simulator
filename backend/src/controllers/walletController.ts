@@ -1,10 +1,9 @@
 import { Request, Response } from 'express';
 import { WalletService } from '../services/walletService';
 import { Pool } from 'pg';
+import { AuthenticatedRequest } from '../middleware/auth';
 
-interface AuthenticatedRequest extends Request {
-  userId?: string;
-}
+
 
 export class WalletController {
   private walletService: WalletService;
@@ -12,217 +11,389 @@ export class WalletController {
   constructor(db: Pool) {
     this.walletService = new WalletService(db);
   }
-  // Create a new virtual wallet
-  createWallet = async (req: AuthenticatedRequest, res: Response) => {
-    try{
-      const { chainId, name } = req.body;
-      const userId = req.userId!;
+  public getWallet = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      
+      const result = await this.walletService.getWalletByUserId(userId);
 
-      const wallet = await this.walletService.createWallet(
-        userId, 
-        chainId || 1, 
-        name || 'Main Wallet'
+      if (result.success) {
+        res.status(200).json(result);
+      } else {
+        res.status(404).json(result);
+      }
+
+    } catch (error) {
+      console.error('Get wallet controller error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public getWalletByChain = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const chainId = parseInt(req.params.chainId);
+
+      if (!chainId || isNaN(chainId)) {
+        res.status(400).json({
+          success: false,
+          message: 'Valid chain ID is required'
+        });
+        return;
+      }
+
+      const chainWallet = await this.walletService.getWalletByChain(userId, chainId);
+
+      if (chainWallet) {
+        res.status(200).json({
+          success: true,
+          message: 'Chain wallet retrieved successfully',
+          data: chainWallet
+        });
+      } else {
+        res.status(404).json({
+          success: false,
+          message: 'Chain wallet not found'
+        });
+      }
+
+    } catch (error) {
+      console.error('Get wallet by chain controller error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public updateTokenBalance = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const { chainId, tokenAddress, balance, priceUsd } = req.body;
+
+      if (!chainId || !tokenAddress || !balance) {
+        res.status(400).json({
+          success: false,
+          message: 'Chain ID, token address, and balance are required'
+        });
+        return;
+      }
+
+      const success = await this.walletService.updateTokenBalance(
+        userId,
+        chainId,
+        tokenAddress,
+        balance,
+        priceUsd
       );
 
-      res.status(201).json({
-        success: true,
-        data: wallet,
-        message: 'Virtual wallet created successfully'
-      });
-    }catch(error){
-        console.error('Error creating wallet:', error);
-        res.status(500).json({
-        success: false,
-        message: 'Failed to create wallet',
-        error: error instanceof Error ? error.message : 'Unknown error'
-    });
-    }
-  }
-  // Get user's wallets
-  getUserWallets = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const wallets = await this.walletService.getUserWallets(userId);
-
-      res.json({
-        success: true,
-        data: wallets
-      });
-    } catch (error) {
-      console.error('Error fetching wallets:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch wallets',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-  // Get specific wallet details
-  getWalletDetails = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { walletId } = req.params;
-      const userId = req.userId!;
-
-      const wallet = await this.walletService.getWalletById(walletId, userId);
-      if (!wallet) {
-        return res.status(404).json({
+      if (success) {
+        res.status(200).json({
+          success: true,
+          message: 'Token balance updated successfully'
+        });
+      } else {
+        res.status(400).json({
           success: false,
-          message: 'Wallet not found'
+          message: 'Failed to update token balance'
         });
       }
 
-      const balances = await this.walletService.getWalletBalances(walletId);
-      const summary = await this.walletService.getPortfolioSummary(walletId);
-
-      res.json({
-        success: true,
-        data: {
-          wallet,
-          balances,
-          summary
-        }
-      });
     } catch (error) {
-      console.error('Error fetching wallet details:', error);
+      console.error('Update token balance controller error:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch wallet details',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        message: 'Internal server error'
       });
     }
   };
-  // Get wallet balances
-  getWalletBalances = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { walletId } = req.params;
-      const userId = req.userId!;
 
-      // Verify wallet ownership
-      const wallet = await this.walletService.getWalletById(walletId, userId);
-      if (!wallet) {
-        return res.status(404).json({
+  public getTokenBalance = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const { chainId, tokenAddress } = req.query;
+
+      if (!chainId || !tokenAddress) {
+        res.status(400).json({
           success: false,
-          message: 'Wallet not found'
+          message: 'Chain ID and token address are required'
         });
+        return;
       }
 
-      const balances = await this.walletService.getWalletBalances(walletId);
-      const totalValue = await this.walletService.getWalletTotalValue(walletId);
-
-      res.json({
-        success: true,
-        data: {
-          balances,
-          totalValue
-        }
-      });
-    } catch (error) {
-      console.error('Error fetching wallet balances:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch wallet balances',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-  // Get transaction history
-  getTransactionHistory = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { walletId } = req.params;
-      const { limit = 50, offset = 0 } = req.query;
-      const userId = req.userId!;
-
-      // Verify wallet ownership
-      const wallet = await this.walletService.getWalletById(walletId, userId);
-      if (!wallet) {
-        return res.status(404).json({
-          success: false,
-          message: 'Wallet not found'
-        });
-      }
-
-      const transactions = await this.walletService.getTransactionHistory(
-        walletId,
-        parseInt(limit as string),
-        parseInt(offset as string)
+      const balance = await this.walletService.getTokenBalance(
+        userId,
+        parseInt(chainId as string),
+        tokenAddress as string
       );
 
-      res.json({
-        success: true,
-        data: transactions
-      });
-    } catch (error) {
-      console.error('Error fetching transaction history:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch transaction history',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  };
-  // Get portfolio summary
-  getPortfolioSummary = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { walletId } = req.params;
-      const userId = req.userId!;
-
-      // Verify wallet ownership
-      const wallet = await this.walletService.getWalletById(walletId, userId);
-      if (!wallet) {
-        return res.status(404).json({
+      if (balance) {
+        res.status(200).json({
+          success: true,
+          message: 'Token balance retrieved successfully',
+          data: balance
+        });
+      } else {
+        res.status(404).json({
           success: false,
-          message: 'Wallet not found'
+          message: 'Token not found in wallet'
         });
       }
 
-      const summary = await this.walletService.getPortfolioSummary(walletId);
+    } catch (error) {
+      console.error('Get token balance controller error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
 
-      res.json({
+  public addTokenToChain = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const { chainId, token_address, token_symbol, token_name, decimals, balance, logo_uri } = req.body;
+
+      if (!chainId || !token_address || !token_symbol || !token_name || decimals === undefined) {
+        res.status(400).json({
+          success: false,
+          message: 'Chain ID, token address, symbol, name, and decimals are required'
+        });
+        return;
+      }
+
+      // Validate token address format
+      if (!/^0x[a-fA-F0-9]{40}$/.test(token_address)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid token address format'
+        });
+        return;
+      }
+
+      const success = await this.walletService.addTokenToChain(userId, chainId, {
+        token_address,
+        token_symbol,
+        token_name,
+        decimals: parseInt(decimals),
+        balance: balance || '0',
+        logo_uri
+      });
+
+      if (success) {
+        res.status(201).json({
+          success: true,
+          message: 'Token added to chain successfully'
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'Failed to add token to chain'
+        });
+      }
+
+    } catch (error) {
+      console.error('Add token to chain controller error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public validateSwapRequirement = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const { chainId, tokenAddress, requiredAmount } = req.body;
+
+      if (!chainId || !tokenAddress || !requiredAmount) {
+        res.status(400).json({
+          success: false,
+          message: 'Chain ID, token address, and required amount are required'
+        });
+        return;
+      }
+
+      const balance = await this.walletService.getTokenBalance(
+        userId,
+        chainId,
+        tokenAddress
+      );
+
+      if (!balance) {
+        res.status(200).json({
+          success: true,
+          message: 'Validation complete',
+          data: {
+            hasToken: false,
+            hasSufficientBalance: false,
+            currentBalance: '0',
+            requiredAmount
+          }
+        });
+        return;
+      }
+
+      const currentBalance = BigInt(balance.balance);
+      const required = BigInt(requiredAmount);
+      const hasSufficientBalance = currentBalance >= required;
+
+      res.status(200).json({
         success: true,
+        message: 'Validation complete',
+        data: {
+          hasToken: true,
+          hasSufficientBalance,
+          currentBalance: balance.balance,
+          currentBalanceFormatted: balance.formatted_balance,
+          requiredAmount,
+          shortfall: hasSufficientBalance ? '0' : (required - currentBalance).toString()
+        }
+      });
+
+    } catch (error) {
+      console.error('Validate swap requirement error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+
+  public getWalletSummaryWithPrices = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const result = await this.walletService.getWalletByUserId(userId);
+
+      if (!result.success || !result.data) {
+        res.status(404).json({
+          success: false,
+          message: 'Wallet not found'
+        });
+        return;
+      }
+
+      const wallet = result.data.wallet;
+      
+      // Enhanced summary with token counts and chain info
+      const summary = {
+        wallet_id: wallet.id,
+        total_chains: Object.keys(wallet.chains).length,
+        total_tokens: Object.values(wallet.chains).reduce((total: number, chain: any) => {
+          return total + chain.tokens.length;
+        }, 0),
+        total_usd_value: result.data.total_usd_value,
+        chains: Object.entries(wallet.chains).map(([chainId, chainData]: [string, any]) => ({
+          chain_id: parseInt(chainId),
+          chain_name: chainData.chain_name,
+          chain_symbol: chainData.chain_symbol,
+          token_count: chainData.tokens.length,
+          total_usd_value: chainData.total_usd_value,
+          tokens: chainData.tokens.map((token: any) => ({
+            address: token.token_address,
+            symbol: token.token_symbol,
+            name: token.token_name,
+            balance: token.formatted_balance,
+            usd_value: token.usd_value || '0',
+            logo_uri: token.logo_uri
+          }))
+        }))
+      };
+
+      res.status(200).json({
+        success: true,
+        message: 'Wallet summary retrieved successfully',
         data: summary
       });
+
     } catch (error) {
-      console.error('Error fetching portfolio summary:', error);
+      console.error('Get wallet summary with prices error:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch portfolio summary',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        message: 'Internal server error'
       });
     }
   };
-  // Validate balance for trade
-  validateBalance = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { walletId } = req.params;
-      const { tokenAddress, amount } = req.body;
-      const userId = req.userId!;
 
-      // Verify wallet ownership
-      const wallet = await this.walletService.getWalletById(walletId, userId);
-      if (!wallet) {
-        return res.status(404).json({
+  public simulateSwap = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const {
+        fromChainId,
+        fromTokenAddress,
+        fromAmount,
+        toChainId,
+        toTokenAddress,
+        toAmount
+      } = req.body;
+
+      if (!fromChainId || !fromTokenAddress || !fromAmount || 
+          !toChainId || !toTokenAddress || !toAmount) {
+        res.status(400).json({
           success: false,
-          message: 'Wallet not found'
+          message: 'All swap parameters are required'
+        });
+        return;
+      }
+
+      const success = await this.walletService.simulateSwap(
+        userId,
+        fromChainId,
+        fromTokenAddress,
+        fromAmount,
+        toChainId,
+        toTokenAddress,
+        toAmount
+      );
+
+      if (success) {
+        res.status(200).json({
+          success: true,
+          message: 'Swap simulated successfully'
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'Failed to simulate swap'
         });
       }
 
-      const isValid = await this.walletService.validateTradeBalance(walletId, tokenAddress, amount);
-
-      res.json({
-        success: true,
-        data: {
-          isValid,
-          tokenAddress,
-          amount
-        }
-      });
     } catch (error) {
-      console.error('Error validating balance:', error);
+      console.error('Simulate swap controller error:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to validate balance',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        message: 'Internal server error'
       });
     }
   };
+
+  public refreshPrices = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as AuthenticatedRequest).user.userId;
+      const success = await this.walletService.refreshWalletPrices(userId);
+
+      if (success) {
+        res.status(200).json({
+          success: true,
+          message: 'Wallet prices refreshed successfully'
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'Failed to refresh wallet prices'
+        });
+      }
+
+    } catch (error) {
+      console.error('Refresh prices controller error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  };
+  
 }
