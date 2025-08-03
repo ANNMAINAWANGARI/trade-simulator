@@ -65,15 +65,23 @@ In the project directory, you can run the following:
 ### `npm install`
 
 
-In your client .env.local file add NEXT_PUBLIC_API_URL=http://localhost:3001
-In your backend .env file add 
+- In your client `.env.local` file add NEXT_PUBLIC_API_URL=http://localhost:3001
+
+# backend `.env` file:
+
+# URL to proxy external API requests (1inch)
 PROXY_URL=
+
+# Database connection settings
 DB_USER=
 DB_HOST=
 DB_NAME=
 DB_PASSWORD=
 DB_PORT=
+
+# JWT secret used for signing user tokens
 JWT_SECRET=
+
 
 ### `npm run dev`
 
