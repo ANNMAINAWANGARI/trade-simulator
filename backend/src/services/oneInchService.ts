@@ -1,9 +1,10 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { Pool } from 'pg';
 import { TokenPrices } from '../types/oneInch';
-import { CrossChainSwapRequest, SwapQuoteRequest, SwapQuoteResponse, SwapSimulationRequest, SwapSimulationResponse } from '../types/swap';
+import { ClassicTokenSwapDetails, CrossChainSwapRequest, normalizeQuote, Quote, SwapQuoteRequest, SwapQuoteResponse, SwapSimulationRequest, SwapSimulationResponse } from '../types/swap';
 import { WalletService } from './walletService';
 import { walletUtils } from '../types/wallet';
+import { toNumber } from 'ethers';
 
 export interface GasPriceResponse {
     baseFee: string,
@@ -104,12 +105,12 @@ export class OneInchService {
   async getSpotPrice(chainId: number, tokenAddress: string, currency?: string): Promise<TokenPrices> {
     try {
       const params: any = {
-        tokenAddress,
+        currency:'USD'
       };
       if (currency) params.currency = currency;
 
-      const response = await this.apiClient.post(
-        `/price/v1.1/${chainId}`,
+      const response = await this.apiClient.get(
+        `/price/v1.1/${chainId}/${tokenAddress}`,
         { params }
       );
       return response.data;
@@ -123,9 +124,9 @@ export class OneInchService {
 
 
   // Get classic swap quote (same chain)
-  public async getClassicSwapQuote(params: SwapQuoteRequest): Promise<SwapQuoteResponse | null> {
+  public async getClassicSwapQuote(params: SwapQuoteRequest): Promise<ClassicTokenSwapDetails | null> {
     try {
-      const response = await this.apiClient.get(`/swap/v6.1/${params.chainId}/quote`, {
+      const response = await this.apiClient.get(`/swap/v6.1/${params.fromChainId}/quote`, {
         params: {
           src: params.fromTokenAddress,
           dst: params.toTokenAddress,
@@ -139,24 +140,24 @@ export class OneInchService {
       const data = response.data;
 
       return {
-        fromToken: {
-          address: data.src.address,
-          symbol: data.src.symbol,
-          name: data.src.name,
-          decimals: data.src.decimals,
-          logoURI: data.src.logoURI
+        srcToken: {
+          address: data.srcToken.address,
+          symbol: data.srcToken.symbol,
+          name: data.srcToken.name,
+          decimals: data.srcToken.decimals,
+          logoURI: data.srcToken.logoURI
         },
-        toToken: {
-          address: data.dst.address,
-          symbol: data.dst.symbol,
-          name: data.dst.name,
-          decimals: data.dst.decimals,
-          logoURI: data.dst.logoURI
+        dstToken: {
+          address: data.dstToken.address,
+          symbol: data.dstToken.symbol,
+          name: data.dstToken.name,
+          decimals: data.dstToken.decimals,
+          logoURI: data.dstToken.logoURI
         },
         fromAmount: params.amount,
-        toAmount: data.dst_amount,
-        estimatedGas: data.gas,
-        protocols: data.protocols,
+        dstAmount: data.dstAmount,
+        gas: data.gas,
+        
         type: 'classic'
       };
 
@@ -172,12 +173,12 @@ export class OneInchService {
       // Use Fusion+ API for cross-chain quotes
       const response = await this.apiClient.get('fusion-plus/quoter/v1.0/quote/receive', {
         params: {
-          srcChainId: params.fromChainId,
-          dstChainId: params.toChainId,
+          srcChain: params.fromChainId.toString(),        
+          dstChain: params.toChainId.toString(),
           srcTokenAddress: params.fromTokenAddress,
           dstTokenAddress: params.toTokenAddress,
-          walletAddress:'0x0000000000000000000000000000000000000000',
           amount: params.amount,
+          walletAddress:'0x0000000000000000000000000000000000000000',
           enableEstimate: true
         }
       });
@@ -187,20 +188,108 @@ export class OneInchService {
       return {
         fromToken: {
           address: params.fromTokenAddress,
-          symbol: data.srcToken?.symbol || 'UNKNOWN',
-          name: data.srcToken?.name || 'Unknown Token',
-          decimals: data.srcToken?.decimals || 18,
-          logoURI: data.srcToken?.logoURI
+          srcTokenAmount:data.srcTokenAmount,
         },
         toToken: {
           address: params.toTokenAddress,
-          symbol: data.dstToken?.symbol || 'UNKNOWN',
-          name: data.dstToken?.name || 'Unknown Token',
-          decimals: data.dstToken?.decimals || 18,
-          logoURI: data.dstToken?.logoURI
+          dstTokenAmount:data.dstTokenAmount,
         },
-        fromAmount: params.amount,
-        toAmount: data.dstAmount,
+        presetsRes:{
+          presets:{
+            fast:{
+              auctionDuration:data.auctionDuration,
+              startAuctionIn:data.auctionDuration,
+              initialRateBump:data.initialRateBump,
+              auctionEndAmount:data.auctionEndAmount,
+              startAmount:data.startAmount,
+              auctionStartAmount:data.auctionStartAmount,
+              costInDstToken:data.costInDstToken,
+              delay:data.delay,
+              coefficient:data.coefficient,
+              allowPartialFills:data.allowPartialFills,
+              allowMultipleFills:data.allowMultipleFills,
+              gasBumpEstimate:data.gasBumpEstimate,
+              gasPriceEstimate:data.gasPriceEstimate,
+              secretsCount:data.secretsCount,
+              gasCost:{
+                gasBumpEstimate:data.gasBumpEstimate,
+                gasPriceEstimate:data.gasPriceEstimate
+              }
+            },
+            medium:{
+              auctionDuration:data.auctionDuration,
+              startAuctionIn:data.auctionDuration,
+              initialRateBump:data.initialRateBump,
+              auctionEndAmount:data.auctionEndAmount,
+              startAmount:data.startAmount,
+              auctionStartAmount:data.auctionStartAmount,
+              costInDstToken:data.costInDstToken,
+              delay:data.delay,
+              coefficient:data.coefficient,
+              allowPartialFills:data.allowPartialFills,
+              allowMultipleFills:data.allowMultipleFills,
+              gasBumpEstimate:data.gasBumpEstimate,
+              gasPriceEstimate:data.gasPriceEstimate,
+              secretsCount:data.secretsCount,
+              gasCost:{
+                gasBumpEstimate:data.gasBumpEstimate,
+                gasPriceEstimate:data.gasPriceEstimate
+              }
+            },
+            slow:{
+              auctionDuration:data.auctionDuration,
+              startAuctionIn:data.auctionDuration,
+              initialRateBump:data.initialRateBump,
+              auctionEndAmount:data.auctionEndAmount,
+              startAmount:data.startAmount,
+              auctionStartAmount:data.auctionStartAmount,
+              costInDstToken:data.costInDstToken,
+              delay:data.delay,
+              coefficient:data.coefficient,
+              allowPartialFills:data.allowPartialFills,
+              allowMultipleFills:data.allowMultipleFills,
+              gasBumpEstimate:data.gasBumpEstimate,
+              gasPriceEstimate:data.gasPriceEstimate,
+              secretsCount:data.secretsCount,
+              gasCost:{
+                gasBumpEstimate:data.gasBumpEstimate,
+                gasPriceEstimate:data.gasPriceEstimate
+              }
+            },
+            custom:{
+              auctionDuration:data.auctionDuration,
+              startAuctionIn:data.auctionDuration,
+              initialRateBump:data.initialRateBump,
+              auctionEndAmount:data.auctionEndAmount,
+              startAmount:data.startAmount,
+              auctionStartAmount:data.auctionStartAmount,
+              costInDstToken:data.costInDstToken,
+              delay:data.delay,
+              coefficient:data.coefficient,
+              allowPartialFills:data.allowPartialFills,
+              allowMultipleFills:data.allowMultipleFills,
+              gasBumpEstimate:data.gasBumpEstimate,
+              gasPriceEstimate:data.gasPriceEstimate,
+              secretsCount:data.secretsCount,
+              gasCost:{
+                gasBumpEstimate:data.gasBumpEstimate,
+                gasPriceEstimate:data.gasPriceEstimate
+              }
+            },
+            
+            
+          },
+          recommendedPreset:data.recommendedPreset,
+          srcSafetyDeposit:data.srcSafetyDeposit,
+          dstSafetyDeposit:data.dstSafetyDeposit,
+          prices:{
+            amountSrcToken:data.prices.usd.srcToken,
+            amountDstToken:data.prices.usd.dstToken,
+
+          },
+          priceImpactPercent:data.priceImpactPercent
+        },
+        
         type: 'cross-chain'
       };
 
@@ -210,158 +299,227 @@ export class OneInchService {
     }
   }
 
-  // Simulate swap and optionally execute
   public async simulateSwap(request: SwapSimulationRequest): Promise<SwapSimulationResponse> {
-    try {
-      // Get user's current wallet
-      const walletResponse = await this.walletService.getWalletByUserId(request.userId);
-      if (!walletResponse.success || !walletResponse.data) {
-        return {
-          success: false,
-          message: 'User wallet not found'
-        };
-      }
-
-      const wallet = walletResponse.data.wallet;
-      const beforeBalances = JSON.parse(JSON.stringify(wallet.chains)); // Deep clone
-
-      // Determine swap type and get quote
-      let quote: SwapQuoteResponse | null = null;
-      const isCrossChain = 'fromChainId' in request.swap && 'toChainId' in request.swap;
-
-      if (isCrossChain) {
-        quote = await this.getCrossChainSwapQuote(request.swap as CrossChainSwapRequest);
-      } else {
-        quote = await this.getClassicSwapQuote(request.swap as SwapQuoteRequest);
-      }
-
-      if (!quote) {
-        return {
-          success: false,
-          message: 'Failed to get swap quote'
-        };
-      }
-
-      // Validate user has sufficient balance
-      const fromChainId = isCrossChain ? 
-        (request.swap as CrossChainSwapRequest).fromChainId : 
-        (request.swap as SwapQuoteRequest).chainId;
-
-      const fromToken = walletUtils.getTokenInChain(wallet, fromChainId, quote.fromToken.address);
-      
-      if (!fromToken) {
-        return {
-          success: false,
-          message: 'Source token not found in wallet'
-        };
-      }
-
-      const availableBalance = BigInt(fromToken.balance);
-      const requiredBalance = BigInt(quote.fromAmount);
-
-      if (availableBalance < requiredBalance) {
-        
-        return {
-          success: false,
-          message: `Insufficient balance. Required: ${walletUtils.fromWei(quote.fromAmount, quote.fromToken.decimals)} ${quote.fromToken.symbol}, Available: ${fromToken.formatted_balance} ${quote.fromToken.symbol}`
-        };
-      }
-
-      // Calculate balance changes
-      let afterBalances = JSON.parse(JSON.stringify(beforeBalances));
-
-      if (request.execute) {
-        // Execute the swap simulation by updating balances
-        if (isCrossChain) {
-          const crossChainSwap = request.swap as CrossChainSwapRequest;
-          await this.walletService.simulateSwap(
-            request.userId,
-            crossChainSwap.fromChainId,
-            quote.fromToken.address,
-            quote.fromAmount,
-            crossChainSwap.toChainId,
-            quote.toToken.address,
-            quote.toAmount
-          );
-        } else {
-          const sameChainSwap = request.swap as SwapQuoteRequest;
-          await this.walletService.simulateSwap(
-            request.userId,
-            sameChainSwap.chainId,
-            quote.fromToken.address,
-            quote.fromAmount,
-            sameChainSwap.chainId,
-            quote.toToken.address,
-            quote.toAmount
-          );
-        }
-
-        // Get updated balances
-        const updatedWalletResponse = await this.walletService.getWalletByUserId(request.userId);
-        if (updatedWalletResponse.success && updatedWalletResponse.data) {
-          afterBalances = updatedWalletResponse.data.wallet.chains;
-        }
-      } else {
-        // Just simulate the changes without persisting
-        if (isCrossChain) {
-          const crossChainSwap = request.swap as CrossChainSwapRequest;
-          afterBalances = this.simulateBalanceChanges(
-            afterBalances,
-            crossChainSwap.fromChainId,
-            quote.fromToken.address,
-            quote.fromAmount,
-            crossChainSwap.toChainId,
-            quote.toToken.address,
-            quote.toAmount
-          );
-        } else {
-          const sameChainSwap = request.swap as SwapQuoteRequest;
-          afterBalances = this.simulateBalanceChanges(
-            afterBalances,
-            sameChainSwap.chainId,
-            quote.fromToken.address,
-            quote.fromAmount,
-            sameChainSwap.chainId,
-            quote.toToken.address,
-            quote.toAmount
-          );
-        }
-      }
-
-      // Calculate slippage and minimum received
-      const slippage = isCrossChain ? 
-        (request.swap as CrossChainSwapRequest).slippage || 1 :
-        (request.swap as SwapQuoteRequest).slippage || 1;
-      
-      const minimumReceived = (BigInt(quote.toAmount) * BigInt(100 - slippage) / BigInt(100)).toString();
-
-      return {
-        success: true,
-        message: request.execute ? 'Swap executed successfully' : 'Swap simulated successfully',
-        data: {
-          quote,
-          balanceChanges: {
-            before: beforeBalances,
-            after: afterBalances
-          },
-          transactionPreview: {
-            fromAmount: walletUtils.fromWei(quote.fromAmount, quote.fromToken.decimals),
-            toAmount: walletUtils.fromWei(quote.toAmount, quote.toToken.decimals),
-            priceImpact: quote.priceImpact || '< 0.01%',
-            minimumReceived: walletUtils.fromWei(minimumReceived, quote.toToken.decimals),
-            networkFee: quote.type === 'fusion' || quote.type === 'cross-chain' ? '0' : '~$5-15'
-          }
-        }
-      };
-
-    } catch (error) {
-      console.error('Swap simulation error:', error);
+  try {
+    // Get user's current wallet
+    const walletResponse = await this.walletService.getWalletByUserId(request.userId);
+    if (!walletResponse.success || !walletResponse.data) {
       return {
         success: false,
-        message: 'Swap simulation failed'
+        message: 'User wallet not found'
       };
     }
+
+    const wallet = walletResponse.data.wallet;
+    const beforeBalances = JSON.parse(JSON.stringify(wallet.chains)); // Deep clone
+
+    // Determine swap type and get quote
+    let quote: ClassicTokenSwapDetails | SwapQuoteResponse | null = null;
+    //const isCrossChain = 'fromChainId' in request.swap !== 'toChainId' in request.swap;
+    const isCrossChain =  request.swap.fromChainId != request.swap.toChainId
+
+    if (isCrossChain) {
+      console.log('Cross-chain swap detected');
+      quote = await this.getCrossChainSwapQuote(request.swap as CrossChainSwapRequest) as SwapQuoteResponse;
+      console.log('Cross-chain quote:', quote);
+    } else {
+      console.log('Classic swap detected');
+      quote = await this.getClassicSwapQuote(request.swap as SwapQuoteRequest) as ClassicTokenSwapDetails;
+      console.log('Classic quote:', quote);
+    }
+
+    if (!quote) {
+      return {
+        success: false,
+        message: 'Failed to get swap quote'
+      };
+    }
+
+    // Extract token addresses and amounts based on quote type
+    let fromTokenAddress: string;
+    let toTokenAddress: string;
+    let fromAmount: string;
+    let toAmount: string;
+    let fromTokenDecimals: number;
+    let toTokenDecimals: number;
+    let priceImpact: string;
+    let toTokenName:string = '';
+    let toTokenSymbol:string = '';
+    let toTokenURI:string ='';
+    //const classicQuote = quote as ClassicTokenSwapDetails;
+
+    if (isCrossChain && 'fromToken' in quote) {
+      // SwapQuoteResponse (cross-chain)
+      const crossChainQuote = quote as SwapQuoteResponse;
+      fromTokenAddress = crossChainQuote.fromToken.address;
+      toTokenAddress = crossChainQuote.toToken.address;
+      fromAmount = crossChainQuote.fromToken.srcTokenAmount;
+      toAmount = crossChainQuote.toToken.dstTokenAmount;
+      priceImpact = crossChainQuote.presetsRes.priceImpactPercent.toString();
+
+      // Get token decimals from 1inch API
+      try {
+        const fromTokenInfo = await this.apiClient.get(`/token/v1.4/${request.swap.fromChainId}/custom/${fromTokenAddress}`);
+        const toTokenInfo = await this.apiClient.get(`/token/v1.4/${request.swap.toChainId}/custom/${toTokenAddress}`);
+        fromTokenDecimals = fromTokenInfo.data.decimals;
+        toTokenDecimals =  toTokenInfo.data.decimals;
+        toTokenName = toTokenInfo.data.name;
+        toTokenSymbol = toTokenInfo.data.symbol;
+        toTokenURI = toTokenInfo.data.logoURI;
+      } catch (error) {
+        console.error('Error fetching token decimals:', error);
+        // Fallback decimals
+        fromTokenDecimals = 18;
+        toTokenDecimals = 18;
+      }
+    } else {
+      // ClassicTokenSwapDetails (same chain)
+      const classicQuote = quote as ClassicTokenSwapDetails;
+      fromTokenAddress = classicQuote.srcToken.address;
+      toTokenAddress = classicQuote.dstToken.address;
+      fromAmount = classicQuote.fromAmount;
+      toAmount = classicQuote.dstAmount;
+      fromTokenDecimals = classicQuote.srcToken.decimals;
+      toTokenDecimals = classicQuote.dstToken.decimals;
+      priceImpact = '< 0.01%'; // Default for classic swaps
+    }
+
+    // Validate user has sufficient balance
+    const fromChainId = isCrossChain ? 
+      (request.swap as CrossChainSwapRequest).fromChainId : 
+      (request.swap as SwapQuoteRequest).fromChainId;
+
+    const fromToken = walletUtils.getTokenInChain(wallet, fromChainId, fromTokenAddress);
+    
+    if (!fromToken) {
+      return {
+        success: false,
+        message: 'Source token not found in wallet'
+      };
+    }
+
+    const availableBalance = BigInt(fromToken.balance);
+    const requiredBalance = BigInt(fromAmount);
+
+    if (availableBalance < requiredBalance) {
+      return {
+        success: false,
+        message: `Insufficient balance. Required: ${walletUtils.fromWei(fromAmount, fromTokenDecimals)} ${fromToken.token_symbol}, Available: ${fromToken.formatted_balance} ${fromToken.token_symbol}`
+      };
+    }
+
+    // Calculate balance changes
+    let afterBalances = JSON.parse(JSON.stringify(beforeBalances));
+    request.execute = true;
+
+    if (request.execute) {
+      console.log('Executing swap...');
+      // Execute the swap simulation by updating balances
+      if (isCrossChain) {
+        const crossChainSwap = request.swap as CrossChainSwapRequest;
+        await this.walletService.simulateSwap(
+          request.userId,
+          crossChainSwap.fromChainId,
+          fromTokenAddress,
+          fromAmount,
+          crossChainSwap.toChainId,
+          toTokenAddress,
+          toAmount,
+          toTokenDecimals,
+          toTokenName,
+          toTokenSymbol,
+          toTokenURI
+        );
+      } else {
+        const sameChainSwap = request.swap as SwapQuoteRequest;
+        const classicQuote = quote as ClassicTokenSwapDetails;
+        await this.walletService.simulateSwap(
+          request.userId,
+          sameChainSwap.fromChainId,
+          fromTokenAddress,
+          fromAmount,
+          sameChainSwap.fromChainId,
+          toTokenAddress,
+          toAmount,
+          //toTokenDecimals,
+          classicQuote.dstToken.decimals,
+          classicQuote.dstToken.name,
+          classicQuote.dstToken.symbol,
+          classicQuote.dstToken.logoURI
+          //toTokenName,
+          //toTokenSymbol
+        );
+      }
+
+      // Get updated balances
+      const updatedWalletResponse = await this.walletService.getWalletByUserId(request.userId);
+      if (updatedWalletResponse.success && updatedWalletResponse.data) {
+        afterBalances = updatedWalletResponse.data.wallet.chains;
+      }
+    } else {
+      // Just simulate the changes without persisting
+      if (isCrossChain) {
+        const crossChainSwap = request.swap as CrossChainSwapRequest;
+        afterBalances = this.simulateBalanceChanges(
+          afterBalances,
+          crossChainSwap.fromChainId,
+          fromTokenAddress,
+          fromAmount,
+          crossChainSwap.toChainId,
+          toTokenAddress,
+          toAmount
+        );
+      } else {
+        const sameChainSwap = request.swap as SwapQuoteRequest;
+        afterBalances = this.simulateBalanceChanges(
+          afterBalances,
+          sameChainSwap.fromChainId,
+          fromTokenAddress,
+          fromAmount,
+          sameChainSwap.fromChainId,
+          toTokenAddress,
+          toAmount
+        );
+      }
+    }
+
+    // Calculate slippage and minimum received
+    const slippage = isCrossChain ? 
+      (request.swap as CrossChainSwapRequest).slippage || 1 :
+      (request.swap as SwapQuoteRequest).slippage || 1;
+    
+    const minimumReceived = (BigInt(toAmount) * BigInt(100 - slippage) / BigInt(100)).toString();
+
+    return {
+      success: true,
+      message: request.execute ? 'Swap executed successfully' : 'Swap simulated successfully',
+      data: {
+        quote,
+        balanceChanges: {
+          before: beforeBalances,
+          after: afterBalances
+        },
+        transactionPreview: {
+          fromAmount: walletUtils.fromWei(fromAmount, fromTokenDecimals),
+          toAmount: walletUtils.fromWei(toAmount, toTokenDecimals),
+          priceImpact: priceImpact,
+          minimumReceived: walletUtils.fromWei(minimumReceived, toTokenDecimals),
+          networkFee: quote.type === 'fusion' || quote.type === 'cross-chain' ? '0' : '~$5-15'
+        }
+      }
+    };
+
+  } catch (error) {
+    console.error('Swap simulation error:', error);
+    return {
+      success: false,
+      message: 'Swap simulation failed'
+    };
   }
+  }
+ 
+  
+
 
   // ==================== CROSS-CHAIN (Fusion+) APIs ====================
 
@@ -459,6 +617,7 @@ export class OneInchService {
 
     return updatedChains;
   }
+
 
   // Get popular swap pairs for a chain
   public async getPopularSwapPairs(chainId: number): Promise<any[]> {

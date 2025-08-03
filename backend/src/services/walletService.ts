@@ -208,7 +208,11 @@ export class WalletService {
     fromAmount: string,
     toChainId: number,
     toTokenAddress: string,
-    toAmount: string
+    toAmount: string,
+    toTokenDecimals?:number,
+    toTokenName?:string,
+    toTokenSymbol?:string,
+    toTokenURI?:string
   ): Promise<boolean> {
     const client = await this.db.connect();
     
@@ -225,12 +229,16 @@ export class WalletService {
       }
 
       const walletData = walletResult.rows[0];
+      // const wallet: Wallet = {
+      //   id: walletData.id,
+      //   user_id: userId,
+      //   chains: walletData.chains || {},
+      //   created_at: new Date(),
+      //   updated_at: new Date()
+      // };
       const wallet: Wallet = {
-        id: walletData.id,
-        user_id: userId,
-        chains: walletData.chains || {},
-        created_at: new Date(),
-        updated_at: new Date()
+        ...walletResult.rows[0],
+        chains: walletResult.rows[0].chains || {}
       };
 
       // Get current balances
@@ -258,7 +266,36 @@ export class WalletService {
 
       // Handle destination token (might not exist yet)
       let finalWallet = updatedWallet1;
-      
+
+      // Initialize chain if it doesn't exist
+      if (!finalWallet.chains[toChainId]) {
+        const chainNames: { [key: number]: { name: string; symbol: string } } = {
+          1: { name: 'Ethereum', symbol: 'ETH' },
+          137: { name: 'Polygon', symbol: 'POL' },
+          42161: { name: 'Arbitrum', symbol: 'ETH' },
+          10: { name: 'Optimism', symbol: 'ETH' },
+          56: { name: 'BNB Chain', symbol: 'BNB' },
+          43114:{name:'Avalanche',symbol:''},
+          8453:{name:'Base',symbol:''},
+          100:{name:'Gnosis',symbol:''},
+          59144:{name:'Linea',symbol:''},
+          146:{name:'Sonic',symbol:''},
+          130:{name:'Unichain',symbol:''},
+          324:{name:'ZkSync',symbol:''},
+        };
+
+        const chainInfo = chainNames[Number(toChainId)];
+        finalWallet.chains[toChainId] = {
+          chain_id: toChainId,
+          chain_name: chainInfo.name, 
+          chain_symbol: chainInfo.symbol, 
+          tokens: [],
+          total_usd_value: "0"
+        };
+      }
+      const toChain = wallet.chains[toChainId];
+      //let toToken = toChain.tokens.find(t => t.token_address === toTokenAddress);
+
       const toToken = walletUtils.getTokenInChain(updatedWallet1, toChainId, toTokenAddress);
       
       if (toToken) {
@@ -273,11 +310,23 @@ export class WalletService {
           toTokenAddress,
           newToBalance
         );
+       
       } else {
         // Token doesn't exist, need to add it first
         // For now, i'll need to know token details. In a real implementation,
         // this info would come from the swap quote
         console.log(`Adding new token ${toTokenAddress} to chain ${toChainId}`);
+        this.addTokenToChain(
+          userId,
+          toChainId,
+          {
+            token_address:toTokenAddress,
+            token_symbol:toTokenSymbol!,
+            token_name:toTokenName!,
+            decimals:toTokenDecimals!,
+            balance: toAmount,
+            logo_uri:toTokenURI!
+          })
         
         // For simulation, i'll just update the balance assuming the token exists
         finalWallet = walletUtils.updateTokenBalance(
@@ -285,7 +334,9 @@ export class WalletService {
           toChainId,
           toTokenAddress,
           toAmount
+
         );
+        
       }
 
       // Save updated wallet
@@ -348,13 +399,22 @@ export class WalletService {
         // Create new chain if it doesn't exist
         const chainNames: { [key: number]: { name: string; symbol: string } } = {
           1: { name: 'Ethereum', symbol: 'ETH' },
-          137: { name: 'Polygon', symbol: 'MATIC' },
+          137: { name: 'Polygon', symbol: 'POL' },
           42161: { name: 'Arbitrum', symbol: 'ETH' },
           10: { name: 'Optimism', symbol: 'ETH' },
-          56: { name: 'BNB Chain', symbol: 'BNB' }
+          56: { name: 'BNB Chain', symbol: 'BNB' },
+          43114:{name:'Avalanche',symbol:''},
+          8453:{name:'Base',symbol:''},
+          100:{name:'Gnosis',symbol:''},
+          59144:{name:'Linea',symbol:''},
+          146:{name:'Sonic',symbol:''},
+          130:{name:'Unichain',symbol:''},
+          324:{name:'ZkSync',symbol:''},
         };
 
-        const chainInfo = chainNames[chainId] || { name: `Chain ${chainId}`, symbol: 'UNKNOWN' };
+        const chainInfo = chainNames[Number(chainId)];
+        console.log('chainInfo for', chainId, chainInfo);
+
         
         wallet.chains[chainKey] = {
           chain_id: chainId,
@@ -367,7 +427,6 @@ export class WalletService {
 
       // Add token to chain
       const updatedWallet = walletUtils.addTokenToChain(wallet, chainId, tokenData);
-
       // Save updated wallet
       await client.query(`
         UPDATE wallets 

@@ -1,3 +1,4 @@
+
 export interface TokenBalance {
   token_address: string;
   token_symbol: string;
@@ -142,7 +143,7 @@ export const walletUtils = {
         token_name: token.token_name,
         decimals: token.decimals,
         balance: token.initial_balance,
-        formatted_balance: walletUtils.fromWei(token.initial_balance, token.decimals),
+        formatted_balance: walletUtils.fromWei(token.initial_balance,token.decimals),
         logo_uri: token.logo_uri,
         current_price_usd: '0',
         usd_value: '0'
@@ -196,10 +197,11 @@ export const walletUtils = {
     if (tokenIndex !== -1) {
       const token = wallet.chains[chainKey].tokens[tokenIndex];
       token.balance = newBalance;
-      token.formatted_balance = walletUtils.fromWei(newBalance, token.decimals);
+      token.formatted_balance =  walletUtils.fromWei(newBalance, token.decimals);
       
       if (priceUsd) {
         token.current_price_usd = priceUsd;
+         
         const balanceFloat = parseFloat(token.formatted_balance);
         token.usd_value = (balanceFloat * parseFloat(priceUsd)).toFixed(2);
       }

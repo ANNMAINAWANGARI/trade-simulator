@@ -32,7 +32,8 @@ export class OneInchController {
         fromTokenAddress: fromToken as string,
         toTokenAddress: toToken as string,
         amount: amount as string,
-        chainId: parseInt(chainId as string),
+        fromChainId: parseInt(chainId as string),
+        toChainId: parseInt(chainId as string),
         slippage: slippage ? parseInt(slippage as string) : 1
       };
 
@@ -302,7 +303,7 @@ export class OneInchController {
 
   public getTokens = async (req: Request, res: Response) => {
     try {
-      const { chainId = '1' } = req.params;
+      const { chainId } = req.params;
       const tokens = await this.oneInchService.getTokensCached(parseInt(chainId));
       
       res.json({

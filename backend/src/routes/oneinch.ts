@@ -15,6 +15,7 @@ export function createOneInchRoutes(db: Pool): Router {
   router.get('/price/:chainId/:tokenAddress', oneInchController.getSpotPrice);
   router.get('/prices/:chainId', oneInchController.getTokenPrices);
   router.get('/gas-price/:chainId', oneInchController.getGasPrice);
+  router.get('/preview',oneInchController.previewSwap)
  
   
   router.get('/market-data/:chainId', oneInchController.getMarketData);
