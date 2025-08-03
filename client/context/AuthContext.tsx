@@ -17,7 +17,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  loading: boolean;
+  loadingAuth: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; message: string }>;
   register: (email: string, password: string) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
@@ -29,7 +29,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingAuth, setLoadingAuth] = useState(true);
 
   useEffect(() => {
     const savedToken = localStorage.getItem('auth_token');
@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(savedToken);
       fetchUserProfile(savedToken);
     } else {
-      setLoading(false);
+      setLoadingAuth(false);
     }
   }, []);
 
@@ -47,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.success && response.data) {
         setUser(response.data.user);
         setToken(authToken);
+        console.log(response.data)
       } else {
         localStorage.removeItem('auth_token');
         setToken(null);
@@ -56,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('auth_token');
       setToken(null);
     }
-    setLoading(false);
+    setLoadingAuth(false);
   };
 
   const login = async (email: string, password: string) => {
@@ -64,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const response = await api.login(email, password);
       
       if (response.success && response.data) {
+        console.log('login success')
         localStorage.setItem('auth_token', response.data.token);
         setToken(response.data.token);
         setUser(response.data.user);
@@ -72,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       return { success: false, message: response.message };
     } catch (error) {
+      console.log('login not a success')
       return { success: false, message: 'Login failed. Please try again.' };
     }
   };
@@ -103,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = {
     user,
     token,
-    loading,
+    loadingAuth,
     login,
     register,
     logout,

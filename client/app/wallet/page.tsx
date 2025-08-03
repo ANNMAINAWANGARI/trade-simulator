@@ -5,22 +5,6 @@ import { useWallet } from '@/hooks/useWallet';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-function WalletHeader({ onLogout }: { onLogout: () => void }) {
-  return (
-    <div className="bg-white border-b border-gray-200 px-6 py-4">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">DeFi Wallet</h1>
-        <button
-          onClick={onLogout}
-          className="text-gray-600 hover:text-gray-800 text-sm"
-        >
-          Sign out
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function WalletSummary({ wallet }: { wallet: any }) {
   return (
     <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
@@ -33,10 +17,6 @@ function WalletSummary({ wallet }: { wallet: any }) {
         <div className="text-center">
           <p className="text-2xl font-bold text-gray-900">{wallet.total_tokens}</p>
           <p className="text-sm text-gray-600">Tokens</p>
-        </div>
-        <div className="text-center">
-          <p className="text-2xl font-bold text-green-600">${wallet.total_usd_value}</p>
-          <p className="text-sm text-gray-600">Total Value</p>
         </div>
       </div>
     </div>
@@ -75,6 +55,18 @@ function ChainSelector({
 }
 
 function TokenList({ chain }: { chain: any }) {
+   const { fetchTokenPrices, tokenPrices, loading: pricesLoading } = useWallet();
+  const [localLoading, setLocalLoading] = useState(false);
+   useEffect(() => {
+    if (chain?.tokens) {
+      setLocalLoading(true);
+      fetchTokenPrices(
+        chain.chain_id,
+        chain.tokens.map(t => t.address)
+      ).finally(() => setLocalLoading(false));
+    }
+  }, [chain]);
+  
   if (!chain) {
     return (
       <div className="bg-white rounded-lg shadow-sm p-6 text-center">
@@ -82,6 +74,11 @@ function TokenList({ chain }: { chain: any }) {
       </div>
     );
   }
+
+  if (localLoading || pricesLoading) {
+    return <div>Loading token prices...</div>;
+  }
+   
 
   return (
     <div className="bg-white rounded-lg shadow-sm">
@@ -96,7 +93,9 @@ function TokenList({ chain }: { chain: any }) {
       
       <div className="divide-y divide-gray-200">
         {chain.tokens.map((token: any, index: number) => (
+          
           <div key={`${token.address}-${index}`} className="px-6 py-4 flex items-center justify-between">
+            
             <div className="flex items-center space-x-3">
               {token.logo_uri && (
                 <img
@@ -112,12 +111,16 @@ function TokenList({ chain }: { chain: any }) {
               <div>
                 <p className="text-sm font-medium text-gray-900">{token.symbol}</p>
                 <p className="text-xs text-gray-500">{token.name}</p>
+                
               </div>
             </div>
             
             <div className="text-right">
-              <p className="text-sm font-medium text-gray-900">{token.balance}</p>
-              <p className="text-xs text-gray-500">${token.usd_value || '0.00'}</p>
+              <p className=" font-bold text-2xl">{token.balance}</p>
+              <div className='flex items-center justify-center gap-2 text-blue-500 font-bold text-sm'>
+                <p>$</p>
+                <p>{tokenPrices[token.address]?.[token.address.toLowerCase()] ?  parseFloat(tokenPrices[token.address][token.address.toLowerCase()]) *parseFloat(token.balance): 'Loading...'}</p>
+              </div>
             </div>
           </div>
         ))}
@@ -127,16 +130,18 @@ function TokenList({ chain }: { chain: any }) {
 }
 
 export default function WalletPage() {
-  const { user, logout, isAuthenticated } = useAuth();
+  const { user, logout, isAuthenticated,loadingAuth } = useAuth();
   const { wallet, loading, error } = useWallet();
   const router = useRouter();
   const [selectedChain, setSelectedChain] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated && !loadingAuth) {
       router.push('/login');
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, router,loadingAuth]);
+
+  
 
   useEffect(() => {
     if (wallet?.chains && wallet.chains.length > 0 && !selectedChain) {
@@ -149,14 +154,23 @@ export default function WalletPage() {
     router.push('/login');
   };
 
+  if (loadingAuth) {
+    return (
+    <div className="flex flex-col justify-center items-center h-screen">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      <p className='font-bold text-2xl'>Loading...</p>
+    </div>
+    )
+  }
+
   if (!isAuthenticated) {
     return null;
   }
+  
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <WalletHeader onLogout={handleLogout} />
         <div className="max-w-4xl mx-auto p-6">
           <div className="text-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
@@ -170,7 +184,6 @@ export default function WalletPage() {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <WalletHeader onLogout={handleLogout} />
         <div className="max-w-4xl mx-auto p-6">
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-red-800">{error}</p>
@@ -183,7 +196,6 @@ export default function WalletPage() {
   if (!wallet) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <WalletHeader onLogout={handleLogout} />
         <div className="max-w-4xl mx-auto p-6">
           <div className="text-center py-12">
             <p className="text-gray-600">No wallet data found</p>
@@ -197,8 +209,6 @@ export default function WalletPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <WalletHeader onLogout={handleLogout} />
-      
       <div className="max-w-4xl mx-auto p-6">
         <div className="mb-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-2">

@@ -123,6 +123,12 @@ class ApiClient {
   async getChainWallet(chainId: number, token: string): Promise<any> {
     return this.get(`/api/wallet/chain/${chainId}`, token);
   }
+  async getTokenPrice(chainId:number,tokenAddress:string,token: string):Promise<any>{
+    return this.get(`/api/1inch/price/${chainId}/${tokenAddress}`,token)
+  }
+  async getChainTokens(chainId:number,token: string):Promise<any>{
+    return this.get(`/api/1inch/tokens/${chainId}`,token)
+  }
 }
 
 export const api = new ApiClient();

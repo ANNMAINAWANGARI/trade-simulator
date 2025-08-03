@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
@@ -10,8 +10,23 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login,isAuthenticated,loadingAuth } = useAuth();
   const router = useRouter();
+
+   useEffect(() => {
+      if (!isAuthenticated && !loadingAuth) {
+        router.push('/login');
+      }
+    }, [isAuthenticated,router,loadingAuth]);
+  
+    if (loadingAuth) {
+      return (
+      <div className="flex flex-col justify-center items-center h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        <p className='font-bold text-2xl'>Loading...</p>
+      </div>
+      )
+    }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
